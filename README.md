@@ -9,6 +9,7 @@ Program ini dikembangkan menggunakan aplikasi [R](https://cran.r-project.org/) d
 - Data Ovitrap Index
 
 ## Trained Model
+Seluruh model dianalisis menggunakan package ```caret```
 - Regression Tree
 - Support Vector Regression
 - Random Forest
