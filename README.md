@@ -25,6 +25,3 @@ Model dipilih berdasarkan RMSE dan MAE. Sehingga model yang diaplikasin pada pro
 Untuk mengakses lama website prediksi, silahkan klik [di sini](https://himhariss.shinyapps.io/PrediksiDengue/)
 
 Untuk dokumentasi permodelan dapat dilihat [di sini](https://dhihram.github.io/Prototype-Prediksi-Kasus-Dengue/#perbandingan-model)
-
-### Tampilan website sebagaimana berikut:
-![Screenshot web](https://github.com/himharis/himharis_web/blob/main/PrediksiDengue/www/Prototype%20Prediksi%20Dengue.png)
