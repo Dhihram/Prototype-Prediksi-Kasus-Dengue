@@ -1,0 +1,361 @@
+---
+title: "Dengue ML PHLC"
+date: '2023-05-20'
+output: rmdformats::material
+---
+
+# Membuka Package
+```{r, message=FALSE, warning=FALSE}
+library(foreign)
+library(tidyverse)
+library(caret)
+library(Hmisc)
+library(corrplot)
+library(lmtest)
+library(car)
+library(rattle)
+library(dplyr)
+library(cowplot)
+library(readxl)
+```
+
+# Membuka File Pengolahan data
+
+## Membuka File
+
+```{r setup}
+setwd("C:/Users/dhihr/Downloads/dengue phlc")
+data_fix <- read_excel("data_fix.xlsx")
+```
+
+## Mengolah Data Awal
+
+```{r}
+data_fix$ABJ <- as.factor(data_fix$ABJ)
+data_fix$Date <- as.Date(data_fix$Date)
+str(data_fix)
+```
+
+## Membagi Data
+
+```{r}
+lastDate<- as.Date("2022-12-30")
+startDate <- data_fix$Date[49]
+x <- ggplot(data_fix) +
+  geom_line(aes(x = Date, y = kasus), size = 1.3, colour = "darkcyan") + labs(title ="Bandung City Dengue Cases 2018-2022", y = " ", x = " ") +
+  annotate("rect", xmin = startDate, xmax = lastDate, ymin=-Inf, ymax=Inf, alpha = 0.2, fill = 'salmon1')  +
+  scale_x_date(date_breaks = "5 month", date_labels = "%b-%y")+ geom_text(x=as.Date("2022-06-01"), y=1250, label="Testing", color = "firebrick") +
+  geom_text(x=as.Date("2019-06-01"), y=1250, label="Training", color = "gray4")
+x
+```
+```{r}
+training<-data_fix[1:48,]
+testing<-data_fix[49:60,]
+```
+
+# EDA
+
+## Dimensi dan Summary Data
+
+```{r}
+dim(training)
+summary(training)
+varnum <- select_if(training, is.numeric)
+head(varnum)
+```
+
+## Data Numerik
+
+### Distribusi
+
+```{r}
+varnum %>% 
+  gather() %>% 
+  ggplot(aes(x=key, y=value)) + 
+  geom_boxplot() + 
+  facet_wrap( ~ key, scales="free")
+pairs(~ . , data=varnum, lower.panel=NULL)
+```
+
+### Korelasi
+
+```{r}
+korelasi <- rcorr(as.matrix(varnum))
+korelasi_r <- korelasi$r
+korelasi_r
+korelasi_p <- korelasi$P
+korelasi_p
+diag(korelasi_p) <- 0
+corrplot(korelasi_r, method="circle", type='upper', 
+         p.mat=korelasi_p, sig.level = 0.05, addCoef.col='black')
+```
+
+## Data Kategorik
+
+```{r}
+varkat <- select_if(training, is.factor)
+head(varkat)
+varkat %>% 
+  gather() %>% 
+  ggplot(aes(y=value)) + 
+  geom_bar() + 
+  coord_flip() +
+  facet_wrap( ~ key, scales="free")
+```
+
+# Permodelan
+
+## Metode Validasi
+
+```{r}
+fit.control <- trainControl(method = "cv", number = 5)
+```
+
+## Linear Regresi
+```{r}
+lr <- train(kasus ~ Tavg + RH_avg + RR + ss + ff_avg + ABJ, 
+            data = training, method = "lm", trControl = fit.control)
+lr
+
+# cek asumsi linieritas
+plot(lr$finalModel, 1)
+
+# cek asumsi homogenitas
+bptest(lr$finalModel)
+
+# cek asumsi autokorelasi
+durbinWatsonTest(lr$finalModel)
+
+# cek asumsi multikolinier
+vif(lr$finalModel)
+
+# cek asumsi normalitas
+residual = training$kasus - predict(lr, training)
+shapiro.test(residual)
+ks.test(residual, "pnorm")
+
+# deksripsi model yang terbentuk
+summary(lr)
+```
+
+### Prediksi dan Testing Linear Regresi
+
+```{r}
+# melakukan prediksi terhadap data testing
+testing$prediksiLR <- predict(lr, testing)
+DT::datatable(head(testing,20))
+
+# melihat tingkat error atau akurasi hasil prediksi
+postResample(testing$prediksiLR, testing$kasus)
+
+# melihat variabel importance
+varImp(lr)
+```
+
+## Ridge Regression
+
+```{r}
+# set range lambda (antara 0.001 sampai 1000)
+lambda <- 10^seq(-3, 3, length = 100)
+
+ridge <- train(kasus ~ Tavg + RH_avg + RR + ss + ff_avg + ABJ, 
+               data = training, method = "glmnet", 
+               trControl = fit.control,
+               tuneGrid = expand.grid(alpha = 0, lambda = lambda))
+ridge
+
+# Model coefficients
+coef(ridge$finalModel, ridge$bestTune$lambda)
+```
+
+### Prediksi dan Testing Ridge Regression
+
+```{r}
+# melakukan prediksi terhadap data testing
+testing$prediksiRidge <- predict(ridge, testing)
+DT::datatable(head(testing,20))
+
+# melihat tingkat error atau akurasi hasil prediksi
+postResample(testing$prediksiRidge, testing$kasus)
+
+# melihat variabel importance
+varImp(ridge)
+```
+
+## Lasso Regression
+
+```{r}
+lasso <- train(kasus ~ Tavg + RH_avg + RR + ss + ff_avg + ABJ, 
+               data = training, method = "glmnet", 
+               trControl = fit.control,
+               tuneGrid = expand.grid(alpha = 1, lambda = lambda))
+lasso
+
+# Model coefficients
+coef(lasso$finalModel, lasso$bestTune$lambda)
+```
+
+### Prediksi dengan Lasso Regression
+
+```{r}
+# melakukan prediksi terhadap data testing
+testing$prediksiLasso <- predict(lasso, testing)
+DT::datatable(head(testing,20))
+
+# melihat tingkat error atau akurasi hasil prediksi
+postResample(testing$prediksiLasso, testing$kasus)
+
+# melihat variabel importance
+varImp(lasso)
+```
+
+## Regression Tree
+
+```{r}
+regtree <- train(kasus ~ Tavg + RH_avg + RR + ss + ff_avg + ABJ, 
+                 data = training, method = "rpart", trControl = fit.control)
+regtree
+
+# menampilkan plot decision tree
+fancyRpartPlot(regtree$finalModel)
+```
+
+### Prediksi dengan Regression Tree
+
+```{r}
+# melakukan prediksi terhadap data testing
+testing$prediksiTree <- predict(regtree, testing)
+DT::datatable(head(testing,20))
+
+# melihat tingkat error atau akurasi hasil prediksi
+postResample(testing$prediksiTree, testing$kasus)
+
+# melihat variabel importance
+varImp(regtree)
+```
+
+## Random Forest
+```{r}
+rf <- train(kasus ~ Tavg + RH_avg + RR + ss + ff_avg + ABJ, data = training, method = "rf", trControl = fit.control)
+rf
+```
+
+### Prediksi dengan Random Forest
+
+```{r}
+# melakukan prediksi terhadap data testing
+testing$prediksiForest <- predict(rf, testing)
+DT::datatable(head(testing,20))
+
+# melihat tingkat error atau akurasi hasil prediksi
+postResample(testing$prediksiForest, testing$kasus)
+
+# melihat variabel importance
+varImp(rf)
+```
+
+## Support Vector Regression (SVM) 
+
+```{r}
+svr <- train(kasus ~ Tavg + RH_avg + RR + ss + ff_avg + ABJ, data = training, method = "svmLinear", trControl = fit.control)
+svr
+```
+
+### Prediksi dengan SVM
+
+```{r}
+# melakukan prediksi terhadap data testing
+testing$prediksiSVR <- predict(svr, testing)
+DT::datatable(head(testing,20))
+
+# melihat tingkat error atau akurasi hasil prediksi
+postResample(testing$prediksiSVR, testing$kasus)
+```
+
+# Perbandingan Model
+
+```{r}
+# menampilkan perbandingan hasil antar model
+model_list <- list(LinearRegression = lr,
+                   RidgeRegression = ridge,
+                   LassoRegression = lasso,
+                   RegressionTree = regtree, 
+                   RandomForestReg = rf, 
+                   SupportVectorReg = svr)
+res <- resamples(model_list)
+summary(res)
+
+
+# bandingkan semua model yang sudah dibuat
+perbandingan <- data.frame(Linear = round(postResample(testing$prediksiLR, testing$kasus),3),
+                           Ridge = round(postResample(testing$prediksiRidge, testing$kasus),3),
+                           Lasso = round(postResample(testing$prediksiLasso, testing$kasus),3),
+                           RegTree = round(postResample(testing$prediksiTree, testing$kasus),3),
+                           RandomForest = round(postResample(testing$prediksiForest, testing$kasus),3),
+                           SVR = round(postResample(testing$prediksiSVR, testing$kasus),3))
+DT::datatable(perbandingan)
+perbandingan
+```
+
+## Grafik Perbandingan
+
+```{r, warning=FALSE, fig.width=10,fig.height=10}
+perbandingan
+training$prediksiLR <- NA
+training$prediksiRidge <- NA
+training$prediksiLasso <- NA
+training$prediksiTree <- NA
+training$prediksiForest <- NA
+training$prediksiSVR <- NA
+final <- rbind(training, testing)
+
+x1 <- ggplot()+
+  geom_line(data=final,aes(y=kasus,x= Date,colour="Observation"),size=1, alpha = 0.6) +
+  geom_line(data=final,aes(y=prediksiLR,x= Date,colour="Prediction LR"),size=1) +
+  scale_color_manual(name = " ", values = c("Observation" = "darkcyan", "Prediction LR" = "orchid4")) +
+  annotate("rect", xmin = startDate, xmax = lastDate, ymin=-Inf, ymax=Inf, alpha = 0.2, fill = 'salmon1') +
+  labs(title ="Observation-LR", y = " ", x = " ") +
+  theme(legend.position="bottom", legend.box = "horizontal") +
+  scale_x_date(date_breaks = "12 month", date_labels = "%Y") 
+x2 <- ggplot()+
+  geom_line(data=final,aes(y=kasus,x= Date,colour="Observation"),size=1, alpha = 0.6) +
+  geom_line(data=final,aes(y=prediksiTree,x= Date,colour="Prediction Reg Tree"),size=1) +
+  scale_color_manual(name = " ", values = c("Observation" = "darkcyan", "Prediction Reg Tree" = "violetred3")) +
+  annotate("rect", xmin = startDate, xmax = lastDate, ymin=-Inf, ymax=Inf, alpha = 0.2, fill = 'salmon1') +
+  labs(title ="Observation-Reg Tree", y = " ", x = " ") +
+  theme(legend.position="bottom", legend.box = "horizontal") +
+  scale_x_date(date_breaks = "12 month", date_labels = "%Y") 
+x3 <- ggplot()+
+  geom_line(data=final,aes(y=kasus,x= Date,colour="Observation"),size=1, alpha = 0.6) +
+  geom_line(data=final,aes(y=prediksiLasso,x= Date,colour="Prediction Lasso"),size=1) +
+  scale_color_manual(name = " ", values = c("Observation" = "darkcyan", "Prediction Lasso" = "darkorange4")) +
+  annotate("rect", xmin = startDate, xmax = lastDate, ymin=-Inf, ymax=Inf, alpha = 0.2, fill = 'salmon1') +
+  labs(title ="Observation-Lasso", y = " ", x = " ") +
+  theme(legend.position="bottom", legend.box = "horizontal")+
+  scale_x_date(date_breaks = "12 month", date_labels = "%Y")
+x4 <- ggplot()+
+  geom_line(data=final,aes(y=kasus,x= Date,colour="Observation"),size=1, alpha = 0.6) +
+  geom_line(data=final,aes(y=prediksiForest,x= Date,colour="Prediction RForest"),size=1) +
+  scale_color_manual(name = " ", values = c("Observation" = "darkcyan", "Prediction RForest" = "midnightblue")) +
+  annotate("rect", xmin = startDate, xmax = lastDate, ymin=-Inf, ymax=Inf, alpha = 0.2, fill = 'salmon1') +
+  labs(title ="Observation-RForest", y = " ", x = " ")+
+  theme(legend.position="bottom", legend.box = "horizontal")+
+  scale_x_date(date_breaks = "12 month", date_labels = "%Y")
+x5 <- ggplot()+
+  geom_line(data=final,aes(y=kasus,x= Date,colour="Observation"),size=1, alpha = 0.6) +
+  geom_line(data=final,aes(y=prediksiSVR,x= Date,colour="Prediction SVR"),size=1) +
+  scale_color_manual(name = " ", values = c("Observation" = "darkcyan", "Prediction SVR" = "green4")) +
+  annotate("rect", xmin = startDate, xmax = lastDate, ymin=-Inf, ymax=Inf, alpha = 0.2, fill = 'salmon1') +
+  labs(title ="Observation-SVR", y = " ", x = " ")+
+  theme(legend.position="bottom", legend.box = "horizontal")+
+  scale_x_date(date_breaks = "12 month", date_labels = "%Y")
+x6 <- ggplot()+
+  geom_line(data=final,aes(y=kasus,x= Date,colour="Observation"),size=1, alpha = 0.6) +
+  geom_line(data=final,aes(y=prediksiSVR,x= Date,colour="Prediction Ridge Reg"),size=1) +
+  scale_color_manual(name = " ", values = c("Observation" = "darkcyan", "Prediction Ridge Reg" = "blue")) +
+  annotate("rect", xmin = startDate, xmax = lastDate, ymin=-Inf, ymax=Inf, alpha = 0.2, fill = 'salmon1') +
+  labs(title ="Observation-Ridge Reg", y = " ", x = " ")+
+  theme(legend.position="bottom", legend.box = "horizontal")+
+  scale_x_date(date_breaks = "12 month", date_labels = "%Y")
+plot_grid(x1, x3, x6, x2, x4, x5, labels = "AUTO")
+```
